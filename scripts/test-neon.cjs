@@ -1,0 +1,28 @@
+﻿const { loadEnvConfig } = require('@next/env');
+const assert = require('node:assert/strict');
+loadEnvConfig(process.cwd());
+const base = process.env.TEST_BASE_URL || 'http://localhost:3000';
+(async () => {
+  let response = await fetch(base + '/api/exports', { method: 'POST' });
+  assert.equal(response.status, 401);
+  console.log('PASS: exports reject unauthenticated requests');
+  response = await fetch(base + '/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: process.env.ADMIN_PASSWORD }) });
+  assert.equal(response.status, 200);
+  const cookie = response.headers.get('set-cookie').split(';')[0];
+  const headers = { cookie };
+  response = await fetch(base + '/api/data', { headers });
+  assert.equal(response.status, 200, await response.clone().text());
+  const data = await response.json();
+  assert.ok(Array.isArray(data.students));
+  console.log('PASS: authenticated app reads all PostgreSQL entities');
+  response = await fetch(base + '/api/exports', { method: 'POST', headers });
+  assert.equal(response.status, 201, await response.clone().text());
+  const { key } = await response.json();
+  response = await fetch(base + '/api/exports?key=' + encodeURIComponent(key), { headers });
+  assert.equal(response.status, 200);
+  const snapshot = await response.json();
+  assert.ok(snapshot.exportedAt);
+  for (const table of ['persons','students','instructors','courses','batches','enrollments','payments']) assert.ok(Array.isArray(snapshot.records[table]));
+  console.log('PASS: app -> Neon Function -> PostgreSQL -> private storage upload -> authenticated download');
+  console.log('Export retained in private bucket: ' + key);
+})().catch(error => { console.error(error.message); process.exitCode = 1; });
